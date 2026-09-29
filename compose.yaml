@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  redis-cache:
+    image: docker.io/library/redis:7-alpine
+    container_name: nukar_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - nukar_redis_data:/data
+    command: redis-server --appendonly yes 
+
+volumes:
+  nukar_redis_data:

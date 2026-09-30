@@ -6,45 +6,71 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
-	
+
 	"github.com/rafif1220/serviceotp/internal/config"
+	"github.com/rafif1220/serviceotp/internal/delivery/http"
+	"github.com/rafif1220/serviceotp/internal/delivery/middleware"
+	"github.com/rafif1220/serviceotp/internal/provider/barantum"
+	"github.com/rafif1220/serviceotp/internal/provider/smtp"
+	mysqlrepo "github.com/rafif1220/serviceotp/internal/repository/mysql"
+	redisrepo "github.com/rafif1220/serviceotp/internal/repository/redis"
+	"github.com/rafif1220/serviceotp/internal/usecase"
 )
 
 func main() {
 	// 1. Load file .env
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("Warning: Gagal load file .env, pastikan file ada di root directory")
+		log.Println("Warning: Gagal load file .env")
 	}
 
-	// 2. Test Koneksi Database & Redis
-	// Kalau gagal, fungsi ini bakal log.Fatal dan nge-stop aplikasi
+	// 2. Inisialisasi Koneksi Database & Redis
 	db := config.InitMySQL()
 	redisClient := config.InitRedis()
-	
-	// (Sementara kita ignore dulu variabel db & redisClient biar gak error 'unused variable')
-	_ = db
-	_ = redisClient
 
-	// 3. Inisialisasi Fiber
+	// 3. Inisialisasi Repository Layer
+	mysqlRepo := mysqlrepo.NewOTPRepository(db)
+	redisRepo := redisrepo.NewCacheRepository(redisClient)
+
+	// 4. Inisialisasi Provider Layer
+	barantumProvider := barantum.NewBarantumProvider()
+	smtpProvider := smtp.NewSMTPProvider()
+
+	// 5. Inisialisasi Usecase Layer (Suntik semua dependency ke sini)
+	otpUsecase := usecase.NewOtpUseCase(
+		mysqlRepo,
+		redisRepo,
+		barantumProvider,
+		smtpProvider,
+	)
+
+	// 6. Inisialisasi Fiber App
 	app := fiber.New(fiber.Config{
 		AppName: "Nukar OTP Service v1.0",
 	})
 
-	// 4. Bikin route buat Health Check
+	// Route Health Check (Tanpa Middleware)
 	app.Get("/ping", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status":  "success",
-			"message": "Pong! Server API OTP Nukar siap tempur 🚀",
-		})
+		return c.JSON(fiber.Map{"status": "success", "message": "Pong!"})
 	})
 
-	// 5. Jalanin Server
+	// 7. Setup Route dengan Middleware
+	// Bikin grup /api/v1 biar rapi
+	api := app.Group("/api/v1")
+	
+	// Bikin grup /otp yang dijagain sama Middleware RequireAPIKey
+	otpGroup := api.Group("/otp", middleware.RequireAPIKey())
+
+	// 8. Inisialisasi Handler dan daftarin routenya
+	otpHandler := http.NewOtpHandler(otpUsecase)
+	otpHandler.Route(otpGroup) // Endpoint jadinya: POST /api/v1/otp/request
+
+	// 9. Jalanin Server
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "3000"
 	}
 
-	log.Printf("Bismillah, Server running on port %s...", port)
+	log.Printf("Bismillah, Server API OTP running on port %s...", port)
 	log.Fatal(app.Listen(":" + port))
 }
